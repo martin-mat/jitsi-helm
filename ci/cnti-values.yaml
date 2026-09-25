@@ -1,0 +1,18 @@
+# Values for the CNTi Test Suite run (.github/workflows/cnti.yml).
+publicURL: https://meet.cnti.test
+web:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+prosody:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+jicofo:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 1000m, memory: 512Mi}
+jvb:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 1000m, memory: 768Mi}
