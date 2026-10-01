@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 Linux Foundation Networking
+# SPDX-License-Identifier: Apache-2.0
+
+# Installs the chart on a kind cluster every night, runs the CNTi Test
+# Suite's cert tests against it and publishes the result as the badge in
+# the README. https://github.com/lfn-cnti/testsuite-action
+name: CNTi cert
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cnti-cert-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      # Publishes the badge to the orphan branch `badges`.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lfn-cnti/testsuite-action@v1
+        with:
+          version: v2.1.0
+          cnf_config: .github/cnti/cnti-testsuite.yaml
+          tests: cert
+          badge_branch: badges
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get pods -A -o wide
+          kubectl get events -n jitsi-cnti --sort-by=.lastTimestamp | tail -40
