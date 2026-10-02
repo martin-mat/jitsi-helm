@@ -1,0 +1,36 @@
+name: memory measurement
+on:
+  push:
+    branches: [mem-measure]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+      - name: metrics-server
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          kubectl patch deploy metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl rollout status deploy/metrics-server -n kube-system --timeout=180s
+      - name: install chart (defaults)
+        run: |
+          helm install jitsi . -n jitsi --create-namespace --set publicURL=https://meet.cnti.test --wait --timeout 10m
+          kubectl get pods -n jitsi -o wide
+      - name: sample memory (idle, 10 min)
+        run: |
+          sleep 60
+          for i in $(seq 1 20); do echo "--- $(date -u +%H:%M:%S)"; kubectl top pod -n jitsi --containers --no-headers || true; sleep 30; done | tee /tmp/top.log
+      - name: per-container cgroup and process memory
+        run: |
+          for p in $(kubectl get pods -n jitsi -o name); do
+            c=$(kubectl get -n jitsi $p -o jsonpath='{.spec.containers[0].name}')
+            echo "=== $p"
+            kubectl exec -n jitsi $p -c $c -- sh -c 'echo "cgroup current: $(cat /sys/fs/cgroup/memory.current) peak: $(cat /sys/fs/cgroup/memory.peak 2>/dev/null)"; for d in /proc/[0-9]*; do n=$(cat $d/comm 2>/dev/null); r=$(grep VmRSS $d/status 2>/dev/null | tr -s " "); [ -n "$r" ] && case "$n" in s6-*) ;; *) echo "$n $(echo $r | cut -d" " -f2-) $(tr "\0" " " < $d/cmdline | grep -oE "\-Xmx[0-9a-zA-Z]+" )";; esac; done' 2>&1
+          done
+      - name: summary
+        run: |
+          awk '/^---/{next} {print $1, $2, $4}' /tmp/top.log | sed 's/Mi$//' | awk '{k=$1" "$2; v=$3+0; if(v>max[k])max[k]=v; sum[k]+=v; n[k]++} END{for(k in max) printf "%-55s avg %5.0f Mi  max %5.0f Mi\n", k, sum[k]/n[k], max[k]}' | sort
