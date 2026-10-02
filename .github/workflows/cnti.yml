@@ -1,42 +1,41 @@
-# SPDX-FileCopyrightText: 2026 Linux Foundation Networking
-# SPDX-License-Identifier: Apache-2.0
-
-# Installs the chart on a kind cluster every night, runs the CNTi Test
-# Suite's cert tests against it and publishes the result as the badge in
-# the README. The workflow does not write to this repository: the badge is
-# GitHub's own workflow badge. https://github.com/lfn-cnti/testsuite-action
 name: CNTi cert
-
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
-  schedule:
-    - cron: "0 3 * * *"
-
+    branches: [sigterm-debug]
 permissions:
   contents: read
-
-concurrency:
-  group: cnti-cert-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   cert:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
+      # Record every process on the kind nodes once a second, in the nodes' own PID
+      # namespace (the one the test's cluster-tools pods see).
+      - name: Process recorder
+        run: |
+          nohup bash -c 'while true; do for n in $(docker ps --format "{{.Names}}" | grep -E "control-plane|worker"); do docker exec $n ps -eo pid=,ppid=,args= 2>/dev/null | sed "s|^|$n |" >> /tmp/ps-all.log; done; sleep 1; done' >/dev/null 2>&1 &
       - uses: lfn-cnti/testsuite-action@05a9860905f31c6813f735d25e5cefd7c62a1e5a # v1.1.0
         with:
           version: v2.1.0
           cnf_config: .github/cnti/cnti-testsuite.yaml
-          tests: cert
-
-      - name: Diagnostics
-        if: failure()
+          tests: sig_term_handled
+          log_level: debug
+          fail_on_failure: false
+      - name: Map flagged PIDs to processes
+        if: always()
         run: |
-          set +e
-          kubectl get pods -A -o wide
-          kubectl get events -n jitsi-cnti --sort-by=.lastTimestamp | tail -40
+          sort -u /tmp/ps-all.log > /tmp/ps.log; wc -l /tmp/ps.log
+          f=$(ls cnti/results/*.yml | grep -v latest | head -1)
+          yq '.items[] | select(.name=="sig_term_handled") | .impacted_resources' "$f"
+          yq '.items[] | select(.name=="sig_term_handled") | .details' "$f"
+          for p in $(yq '.items[] | select(.name=="sig_term_handled") | .impacted_resources[].reason' "$f" | grep -oE '[0-9]+ \(killed' | cut -d' ' -f1 | sort -u); do
+            echo "== PID $p:"; awk -v p=$p '$2==p' /tmp/ps.log | cut -c1-200 | sort -u
+          done
+          echo "== judged pids per container:"
+          for p in $(yq '.items[] | select(.name=="sig_term_handled") | .details[]' "$f" | grep -oE 'judged pid\(s\) [0-9, ]+' | grep -oE '[0-9]+' | sort -u); do
+            awk -v p=$p '$2==p {print $1, $2, $3, substr($0, index($0,$4), 120)}' /tmp/ps.log | head -1
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: ps-log, path: /tmp/ps.log}
