@@ -20,7 +20,7 @@ permissions:
 jobs:
   cert:
     # Forks that enable scheduled workflows do not run it.
-    if: github.repository == 'jitsi-contrib/jitsi-helm'
+    if: github.repository == 'martin-mat/jitsi-helm'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
